@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    background-color: #030712;
+    color: #f1f5f9;
+  }
+}
+
+/* Custom terminal scanline & glow effects */
+.terminal-glow {
+  box-shadow: 0 0 25px -5px rgba(16, 185, 129, 0.15);
+}
+
+.radar-sweep {
+  background: conic-gradient(from 0deg, rgba(16, 185, 129, 0.15) 0deg, transparent 60deg, transparent 360deg);
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #090d16;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
