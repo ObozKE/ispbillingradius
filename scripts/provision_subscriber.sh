@@ -53,8 +53,8 @@ fi
 
 # 3. Update Mikrotik-Rate-Limit and Tunnel-Private-Group-Id in the user's stanza
 sed -i "/^\"${USERNAME}\"/,/^$/ {
-    s/Mikrotik-Rate-Limit = \"[^\"]*\"/Mikrotik-Rate-Limit = \"${RATE_LIMIT}\"/
-    s/Tunnel-Private-Group-Id = \"[^\"]*\"/Tunnel-Private-Group-Id = \"${VLAN_ID}\"/
+    s|Mikrotik-Rate-Limit = \"[^\"]*\"|Mikrotik-Rate-Limit = \"${RATE_LIMIT}\"|
+    s|Tunnel-Private-Group-Id = \"[^\"]*\"|Tunnel-Private-Group-Id = \"${VLAN_ID}\"|
 }" "$AUTH_FILE"
 
 # 4. Reload FreeRADIUS daemon so new authentication requests get the new profile

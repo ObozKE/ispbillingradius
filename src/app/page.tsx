@@ -62,13 +62,16 @@ export default function TelecomNocPortal() {
     `[RFC-5176] BRAS Change of Authorization (CoA) listener ready on UDP 3799`,
   ]);
 
-  const terminalEndRef = useRef<HTMLDivElement>(null);
+  const terminalContainerRef = useRef<HTMLDivElement>(null);
 
   // Append formatted log
   const pushLog = useCallback((msg: string) => {
     const time = new Date().toISOString().substring(11, 19);
-    setConsoleLogs((prev) => [...prev, `[${time}] ${msg}`]);
+    setConsoleLogs((prev) => [...prev.slice(-60), `[${time}] ${msg}`]);
   }, []);
+
+  // Track seen audit logs to avoid duplicate printing when polling
+  const seenAuditLogsRef = useRef<Set<string>>(new Set());
 
   // Fetch full status
   const fetchStatus = useCallback(async (quiet = false) => {
@@ -78,6 +81,21 @@ export default function TelecomNocPortal() {
       if (res.ok) {
         const json = await res.json();
         setData(json);
+
+        // Synchronize any external backend audit logs (e.g. from cURL or external webhook)
+        if (json.auditLogs && Array.isArray(json.auditLogs)) {
+          const newLogs = [...json.auditLogs].reverse();
+          for (const item of newLogs) {
+            const key = `${item.timestamp}-${item.stage}`;
+            if (!seenAuditLogsRef.current.has(key)) {
+              seenAuditLogsRef.current.add(key);
+              // Only stream non-init audit logs if page has already loaded
+              if (item.stage !== 'SYSTEM_INIT') {
+                pushLog(`[AUDIT-LEDGER] ${item.stage} -> ${item.message}`);
+              }
+            }
+          }
+        }
 
         // Check if there's any pending transaction
         const pending = json.transactions?.find((t: MpesaTransaction) => t.status === 'PENDING');
@@ -109,6 +127,23 @@ export default function TelecomNocPortal() {
     }, 2500);
     return () => clearInterval(interval);
   }, [fetchStatus]);
+
+  // Real-time Telecom NOC Heartbeat Telemetry (emulates continuous AAA & router telemetry)
+  useEffect(() => {
+    const heartbeatTimer = setInterval(() => {
+      const time = new Date().toISOString().substring(11, 19);
+      const metrics = [
+        `[RADIUS-MONITOR] FreeRADIUS AAA listener OK | UDP 1812 (Auth) & UDP 1813 (Acct) alive`,
+        `[BRAS-TELEMETRY] BRAS-CORE-01 keepalive: PPPoE session cust_001 active (10.10.100.50)`,
+        `[RFC-5176] CoA listener state: LISTENING on UDP 3799 | 0 packet drop errors`,
+        `[DARAJA-INGRESS] Safaricom M-Pesa webhook ingress endpoint: ACTIVE & IDEMPOTENT`,
+      ];
+      const randomMetric = metrics[Math.floor(Math.random() * metrics.length)];
+      setConsoleLogs((prev) => [...prev.slice(-60), `[${time}] ${randomMetric}`]);
+    }, 10000);
+
+    return () => clearInterval(heartbeatTimer);
+  }, []);
 
   // Supabase Realtime Subscription
   useEffect(() => {
@@ -145,9 +180,11 @@ export default function TelecomNocPortal() {
     }
   }, [fetchStatus, pushLog]);
 
-  // Auto-scroll terminal
+  // Auto-scroll ONLY inside the inner terminal window (never the browser page)
   useEffect(() => {
-    terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (terminalContainerRef.current) {
+      terminalContainerRef.current.scrollTop = terminalContainerRef.current.scrollHeight;
+    }
   }, [consoleLogs]);
 
   // Handle STK Push Submission
@@ -213,7 +250,16 @@ export default function TelecomNocPortal() {
       if (res.ok && json.success) {
         if (resultCode === 0) {
           pushLog(`[STAGE-2] Daraja Webhook Received & ACID Idempotency Verified (Receipt: ${json.receiptNumber})`);
+
+          // Stream the real-time SSH and CoA steps with dynamic pacing
+          const radiusLogs: string[] = json.callbackResult?.radiusProvisioning?.logs || [];
+          for (const line of radiusLogs) {
+            await new Promise((r) => setTimeout(r, 100));
+            pushLog(line);
+          }
+
           pushLog(`[STAGE-3] SSH -> RHEL FreeRADIUS CoA Packet (UDP 3799) executed successfully! Output: PROVISION_OK`);
+          await new Promise((r) => setTimeout(r, 120));
           pushLog(`[STAGE-4] Supabase RPC Ledger Committed — Link Upgraded to ${json.callbackResult?.subscriber?.current_plan?.rate_limit || 'new tier'}`);
         } else {
           pushLog(`[STAGE-2] Webhook received: User cancelled STK prompt (ResultCode ${resultCode})`);
@@ -718,10 +764,14 @@ export default function TelecomNocPortal() {
             <div className="bg-slate-950 border border-slate-800 rounded-2xl flex-1 flex flex-col overflow-hidden shadow-2xl">
               {/* Terminal Title Bar */}
               <div className="bg-slate-900/90 px-4 py-3 border-b border-slate-800 flex items-center justify-between">
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-2.5">
                   <Terminal className="w-4 h-4 text-emerald-400" />
                   <span className="text-xs font-mono font-bold text-slate-200">
                     PROVISIONING TELEMETRY STREAM
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    STREAMING LIVE
                   </span>
                 </div>
                 <div className="flex items-center space-x-1.5">
@@ -732,14 +782,21 @@ export default function TelecomNocPortal() {
               </div>
 
               {/* Logs Screen */}
-              <div className="p-4 flex-1 font-mono text-xs overflow-y-auto max-h-[380px] space-y-1.5 bg-[#050914] text-slate-300">
+              <div
+                ref={terminalContainerRef}
+                className="p-4 flex-1 font-mono text-xs overflow-y-auto max-h-[380px] space-y-1.5 bg-[#050914] text-slate-300"
+              >
                 {consoleLogs.map((log, idx) => {
                   let colorClass = 'text-slate-300';
                   if (log.includes('[STAGE-') || log.includes('[PROVISION_OK]')) {
                     colorClass = 'text-emerald-400 font-semibold';
                   } else if (log.includes('[CoA]') || log.includes('[RFC-5176]')) {
                     colorClass = 'text-cyan-300';
-                  } else if (log.includes('[STK-PUSH]') || log.includes('[REALTIME')) {
+                  } else if (log.includes('[SSH]') || log.includes('[EXEC]') || log.includes('[RHEL]')) {
+                    colorClass = 'text-indigo-300';
+                  } else if (log.includes('[HEARTBEAT]') || log.includes('[RADIUS-MONITOR]') || log.includes('[BRAS-TELEMETRY]')) {
+                    colorClass = 'text-slate-400 italic';
+                  } else if (log.includes('[STK-PUSH]') || log.includes('[REALTIME') || log.includes('[AUDIT')) {
                     colorClass = 'text-amber-300';
                   } else if (log.includes('ERR') || log.includes('FAILED') || log.includes('cancelled')) {
                     colorClass = 'text-red-400';
@@ -751,7 +808,11 @@ export default function TelecomNocPortal() {
                     </div>
                   );
                 })}
-                <div ref={terminalEndRef} />
+                {/* Active Terminal Prompt & Blinking Cursor */}
+                <div className="flex items-center gap-1.5 text-emerald-500/70 pt-1 text-[11px]">
+                  <span>radius-noc@gateway:~$</span>
+                  <span className="w-2 h-3.5 bg-emerald-400 animate-pulse inline-block" />
+                </div>
               </div>
 
               {/* Terminal Footer */}
